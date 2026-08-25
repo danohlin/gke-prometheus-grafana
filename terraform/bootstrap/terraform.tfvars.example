@@ -1,0 +1,4 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+project_id        = "my-project-id"
+region            = "us-central1"
+state_bucket_name = "my-project-id-tfstate"

@@ -1,0 +1,114 @@
+variable "project_id" {
+  description = "Google Cloud project ID to deploy into."
+  type        = string
+}
+
+variable "zone" {
+  description = <<-EOT
+    Compute zone for the cluster, e.g. "us-central1-a". This is a ZONAL cluster
+    on purpose: the GKE management fee is a flat $0.10/cluster/hour for every
+    topology, but the free tier grants $74.40/month per billing account against
+    exactly one zonal Standard (or Autopilot) cluster -- which cancels the fee.
+    A regional cluster pays the same fee with no credit, so ~$73/month more.
+  EOT
+  type        = string
+  default     = "us-central1-a"
+}
+
+variable "cluster_name" {
+  description = "Name of the GKE cluster."
+  type        = string
+  default     = "gke-monitoring-demo"
+}
+
+variable "authorized_networks" {
+  description = <<-EOT
+    CIDR blocks permitted to reach the public control-plane endpoint. No default
+    on purpose -- leaving the endpoint open to the whole internet should be a
+    conscious choice, not an accident. Find your address with:
+
+      curl -s ifconfig.me
+
+    and set [{ cidr_block = "203.0.113.4/32", display_name = "workstation" }].
+  EOT
+  type = list(object({
+    cidr_block   = string
+    display_name = string
+  }))
+}
+
+variable "node_machine_type" {
+  description = <<-EOT
+    Node machine type. E2 is chosen deliberately: N4/C4/N4D do not support
+    Persistent Disk at all (Hyperdisk only), so the standard-rwo StorageClass
+    that the Helm values request would fail to bind on those families unless the
+    cluster is 1.35.0-gke.2232000+ with a `type: dynamic` StorageClass.
+  EOT
+  type        = string
+  default     = "e2-standard-2"
+}
+
+variable "node_count" {
+  description = <<-EOT
+    Nodes in the single zone. Three keeps the node-exporter dashboards
+    meaningful; the monitoring stack itself only requests ~800m CPU / 2.7Gi.
+  EOT
+  type        = number
+  default     = 3
+}
+
+variable "node_disk_size_gb" {
+  description = <<-EOT
+    Boot disk per node. Set to 50 rather than accepting GKE's 100GiB default,
+    which would silently double the boot-disk line on the bill.
+  EOT
+  type        = number
+  default     = 50
+}
+
+variable "use_spot" {
+  description = <<-EOT
+    Spot nodes halve compute cost (~$0.0335/hr vs $0.067/hr for e2-standard-2)
+    at the price of 30-second preemption notices. For a monitoring demo that is
+    close to a feature -- you get to watch the alerts fire -- but Prometheus
+    will restart and leave a small gap in its series. Set false for continuity.
+
+    Because EVERY node is Spot, GKE applies no taint that needs tolerating.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "deletion_protection" {
+  description = <<-EOT
+    Defaults to false because this is an explicitly disposable demo cluster and
+    a half-completed `terraform destroy` is the main way it starts costing money
+    unattended. Set true for anything you intend to keep.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "subnet_cidr" {
+  description = "Primary range for node IPs."
+  type        = string
+  default     = "10.10.0.0/24"
+}
+
+variable "pods_cidr" {
+  description = "Secondary range for Pod IPs (VPC-native alias IPs)."
+  type        = string
+  default     = "10.20.0.0/16"
+}
+
+variable "services_cidr" {
+  description = "Secondary range for Service ClusterIPs."
+  type        = string
+  default     = "10.30.0.0/20"
+}
+
+variable "master_cidr" {
+  description = "RFC1918 /28 for the control plane's private endpoint."
+  type        = string
+  default     = "172.16.0.0/28"
+}

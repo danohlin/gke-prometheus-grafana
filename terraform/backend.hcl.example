@@ -1,0 +1,3 @@
+# Copy to backend.hcl and set the bucket created by terraform/bootstrap, then:
+#   terraform init -backend-config=backend.hcl
+bucket = "my-project-id-tfstate"

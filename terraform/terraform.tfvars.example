@@ -1,0 +1,23 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+
+project_id   = "my-project-id"
+zone         = "us-central1-a"
+cluster_name = "gke-monitoring-demo"
+
+# Restrict the public control-plane endpoint. Find your address with:
+#   curl -s ifconfig.me
+authorized_networks = [
+  {
+    cidr_block   = "203.0.113.4/32"
+    display_name = "workstation"
+  },
+]
+
+# Cost knobs. Defaults give ~$0.13/hr all-in; see README.
+node_machine_type = "e2-standard-2"
+node_count        = 3
+node_disk_size_gb = 50
+use_spot          = true
+
+# Demo cluster: leave false so `terraform destroy` completes cleanly.
+deletion_protection = false

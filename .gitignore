@@ -32,6 +32,12 @@ crash.*.log
 *.tfvars.json
 !*.tfvars.example
 
+# Partial backend config: names the environment-specific state bucket.
+# Listed explicitly rather than via *.hcl, because .terraform.lock.hcl above
+# MUST stay tracked.
+backend.hcl
+!backend.hcl.example
+
 # ---------------------------------------------------------------------------
 # Credentials — service-account keys and gcloud ADC caches must never land in
 # git. A leaked SA key is a full impersonation of that identity.
