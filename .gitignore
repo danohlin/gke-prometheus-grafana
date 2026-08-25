@@ -19,6 +19,10 @@
 *.tfplan
 *.tfplan.*
 plan.out
+# `terraform show -json <plan>` output: same content as a plan file, but a
+# name the patterns above do not catch.
+plan.json
+*.tfplan.json
 
 # Terraform crash reports can embed request bodies.
 crash.log
