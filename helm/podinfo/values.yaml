@@ -1,0 +1,34 @@
+# ---------------------------------------------------------------------------
+# podinfo -- the demo workload the monitoring stack observes.
+#
+# Deployed AFTER kube-prometheus-stack, because ServiceMonitor is a CRD
+# installed by that chart. Applied first, this release fails with:
+#   no matches for kind "ServiceMonitor" in version "monitoring.coreos.com/v1"
+#
+# Chart version is pinned in the sibling VERSION file.
+# ---------------------------------------------------------------------------
+
+# Two replicas so the dashboards show per-pod series rather than a single flat
+# line, and so `Generate-Load.ps1 -Panic` can kill one without a full outage.
+replicaCount: 2
+
+serviceMonitor:
+  # Chart default is false. This single line is what makes podinfo visible to
+  # Prometheus -- and because the monitoring release sets
+  # serviceMonitorSelectorNilUsesHelmValues=false, it is discovered across
+  # namespaces with no redeploy of the stack.
+  #
+  # NOTE: the chart's ServiceMonitor scrapes `port: http` (9898) at /metrics,
+  # NOT the service's declared metricsPort 9797. podinfo serves its Prometheus
+  # metrics on the main HTTP port.
+  enabled: true
+  interval: 15s
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    # No CPU limit: `Generate-Load.ps1` deliberately drives CPU, and throttling
+    # would flatten the very latency signal the demo is meant to show.
+    memory: 128Mi

@@ -1,0 +1,145 @@
+# ---------------------------------------------------------------------------
+# kube-prometheus-stack values, tuned for GKE Standard + Dataplane V2.
+# Chart version is pinned in the sibling VERSION file.
+#
+# Only deliberate deviations from chart defaults are listed. Everything not
+# mentioned here is intentionally left at the chart default.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# 1. Control-plane scrape targets that do not exist on GKE.
+#
+# GKE runs the scheduler, controller-manager, and etcd on Google-managed
+# infrastructure with no reachable metrics endpoint. Left enabled, the stack
+# fires KubeSchedulerDown / KubeControllerManagerDown / etcdMembersDown within
+# minutes of install and never stops -- the classic GKE false-positive storm.
+# ---------------------------------------------------------------------------
+kubeControllerManager:
+  enabled: false # GKE-managed, no reachable endpoint
+kubeScheduler:
+  enabled: false # GKE-managed, no reachable endpoint
+kubeEtcd:
+  enabled: false # GKE-managed, no reachable endpoint
+
+# Dataplane V2 (datapath_provider = ADVANCED_DATAPATH) replaces kube-proxy with
+# eBPF, so there is no kube-proxy DaemonSet to scrape at all. On a LEGACY
+# datapath cluster this would still need to be false, because GKE binds
+# kube-proxy metrics to 127.0.0.1:10249 where Prometheus cannot reach them.
+kubeProxy:
+  enabled: false
+
+# GKE ships kube-dns, not CoreDNS.
+coreDns:
+  enabled: false
+kubeDns:
+  enabled: true
+
+# These two DO work on GKE and are the backbone of the useful dashboards.
+kubeApiServer:
+  enabled: true
+kubelet:
+  enabled: true # also provides cAdvisor container metrics
+
+# ---------------------------------------------------------------------------
+# 2. Prometheus
+# ---------------------------------------------------------------------------
+prometheus:
+  prometheusSpec:
+    retention: 15d
+
+    # Belt and braces alongside `retention`: a size cap set below the volume
+    # size means a sudden burst in cardinality compacts old blocks away instead
+    # of filling the disk and wedging the TSDB.
+    retentionSize: 45GiB
+
+    # ---------------------------------------------------------------------
+    # The five lines that make this stack extensible.
+    #
+    # Chart default for each is `true`, which means "if no selector is set,
+    # only match objects carrying THIS release's Helm labels". The practical
+    # effect is that a ServiceMonitor you deploy alongside any other app is
+    # silently ignored. Setting them false means a nil selector matches
+    # everything in every namespace, so podinfo (deployed later, in its own
+    # namespace, by a different Helm release) is discovered automatically with
+    # no change to this release.
+    # ---------------------------------------------------------------------
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    scrapeConfigSelectorNilUsesHelmValues: false
+
+    resources:
+      requests:
+        cpu: 500m
+        memory: 2Gi
+      limits:
+        # No CPU limit on purpose: throttling the TSDB during compaction causes
+        # scrape backlogs. Memory is capped because a runaway Prometheus will
+        # otherwise evict its neighbours on a 8GiB node.
+        memory: 3Gi
+
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          # GKE default class: pd-balanced, ReadWriteOnce. The cluster is zonal
+          # so a rescheduled pod can always re-attach this disk.
+          storageClassName: standard-rwo
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 50Gi
+
+# ---------------------------------------------------------------------------
+# 3. Grafana
+# ---------------------------------------------------------------------------
+grafana:
+  # Credentials come from a Secret created out of band by
+  # scripts/Bootstrap-Secrets.ps1. Never set `adminPassword` here -- this file
+  # is committed to git.
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+
+  # Access is via `kubectl port-forward` only: no Ingress, no LoadBalancer, no
+  # public IP, nothing to expose and nothing to put a certificate on.
+  service:
+    type: ClusterIP
+
+  persistence:
+    enabled: true
+    storageClassName: standard-rwo
+    size: 10Gi
+
+  # Chart default is utc; browser-local makes the demo easier to narrate.
+  defaultDashboardsTimezone: browser
+
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      # NOTE: ALL is already the chart default in 88.5.4 -- pinned explicitly
+      # because the podinfo RED dashboard ships as a ConfigMap in the `demo`
+      # namespace, so a future default of "release namespace only" would
+      # silently stop importing it.
+      searchNamespace: ALL
+
+# ---------------------------------------------------------------------------
+# 4. Alertmanager
+#
+# Enabled with the ~100 built-in kubernetes-mixin rules firing, but no receiver
+# configured: alerts collect in the Alertmanager UI and page nobody. This shows
+# what WOULD have alerted before committing to a Slack/PagerDuty channel, and
+# keeps webhook secrets out of the repo entirely.
+# ---------------------------------------------------------------------------
+alertmanager:
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: standard-rwo
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
