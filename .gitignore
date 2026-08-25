@@ -1,0 +1,71 @@
+# ---------------------------------------------------------------------------
+# Terraform state — contains resource attributes in plaintext, including any
+# sensitive values. Remote state lives in GCS (see terraform/bootstrap).
+# ---------------------------------------------------------------------------
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Provider plugins and module caches: large, platform-specific, re-fetchable.
+.terraform/
+.terraform.tfstate.lock.info
+
+# NOTE: .terraform.lock.hcl is deliberately NOT ignored. It pins provider
+# checksums and must be committed so every run resolves identical providers.
+
+# ---------------------------------------------------------------------------
+# Plan files — a saved plan embeds full resource state, secrets included.
+# ---------------------------------------------------------------------------
+*.tfplan
+*.tfplan.*
+plan.out
+
+# Terraform crash reports can embed request bodies.
+crash.log
+crash.*.log
+
+# ---------------------------------------------------------------------------
+# Variable files — hold the real project ID, zone, and authorized CIDRs.
+# The .example counterparts ARE committed as templates.
+# ---------------------------------------------------------------------------
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# ---------------------------------------------------------------------------
+# Credentials — service-account keys and gcloud ADC caches must never land in
+# git. A leaked SA key is a full impersonation of that identity.
+# ---------------------------------------------------------------------------
+*-sa-key.json
+*service-account*.json
+*serviceaccount*.json
+application_default_credentials.json
+credentials.json
+
+# ---------------------------------------------------------------------------
+# Kubernetes — kubeconfigs carry cluster CA data and auth tokens. Generated
+# secret manifests (Grafana admin) must stay local.
+# ---------------------------------------------------------------------------
+kubeconfig
+kubeconfig*
+*.kubeconfig
+secrets/
+*.secret.yaml
+*.secret.yml
+
+# ---------------------------------------------------------------------------
+# Helm — pulled chart archives and resolved dependencies are re-fetchable
+# from the upstream repo at the pinned version in each chart's VERSION file.
+# ---------------------------------------------------------------------------
+helm/**/charts/
+helm/**/*.tgz
+helm/**/Chart.lock
+
+# ---------------------------------------------------------------------------
+# Editor / OS noise
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
