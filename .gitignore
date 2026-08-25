@@ -42,11 +42,14 @@ backend.hcl
 # Credentials — service-account keys and gcloud ADC caches must never land in
 # git. A leaked SA key is a full impersonation of that identity.
 # ---------------------------------------------------------------------------
-*-sa-key.json
+# Matches sa-key.json, gcp-key.json, my-project-key.json, etc. The bare
+# `*-sa-key.json` form missed a file named exactly sa-key.json.
+*key.json
+*sa-key*.json
 *service-account*.json
 *serviceaccount*.json
+*credentials*.json
 application_default_credentials.json
-credentials.json
 
 # ---------------------------------------------------------------------------
 # Kubernetes — kubeconfigs carry cluster CA data and auth tokens. Generated
