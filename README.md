@@ -207,12 +207,26 @@ Pinned deliberately; all current stable as of 2026-08-25, none deprecated or end
 | Terraform | `>= 1.15.0` | [terraform/versions.tf](terraform/versions.tf) |
 | `hashicorp/google` | `~> 7.45` | [terraform/versions.tf](terraform/versions.tf) |
 | Helm CLI | 4.x enforced at runtime | [scripts/Deploy-Monitoring.ps1](scripts/Deploy-Monitoring.ps1) |
-| `kube-prometheus-stack` | `88.5.4` (operator `v0.93.1`) | [helm/kube-prometheus-stack/VERSION](helm/kube-prometheus-stack/VERSION) |
-| ├ grafana subchart | 12.11.2 | bundled |
-| ├ prometheus-node-exporter | 4.56.1 | bundled |
-| └ kube-state-metrics | 8.4.0 | bundled |
-| `podinfo` | `6.14.1` | [helm/podinfo/VERSION](helm/podinfo/VERSION) |
+| `kube-prometheus-stack` | chart `88.5.4` | [helm/kube-prometheus-stack/VERSION](helm/kube-prometheus-stack/VERSION) |
+| `podinfo` | chart `6.14.1` | [helm/podinfo/VERSION](helm/podinfo/VERSION) |
 | GKE | `REGULAR` channel, unpinned | [terraform/cluster.tf](terraform/cluster.tf) |
+
+Only the chart versions above are pinned by this repo. Everything the chart brings with it
+follows from that pin — listed here as **subchart version → application version actually
+running**, because the two differ and confusing them is an easy mistake to make (the Grafana
+subchart is on 12.x while Grafana itself is on 13.x):
+
+| Bundled component | Subchart | Application running |
+|---|---|---|
+| prometheus-operator | — (chart `appVersion`) | `v0.93.1` |
+| Prometheus | — | `v3.14.0` |
+| Alertmanager | — | `v0.34.0` |
+| Grafana | 12.11.2 | **`13.2.0`** |
+| node-exporter | 4.56.1 | `v1.12.1` |
+| kube-state-metrics | 8.4.0 | `v2.20.0` |
+
+Application versions above were read off the running cluster with
+`kubectl get pods -n monitoring -o jsonpath='{..image}'`, not from chart metadata.
 
 GKE is tracked by release channel rather than a pinned `min_master_version`, which would go
 stale and eventually fall out of support.

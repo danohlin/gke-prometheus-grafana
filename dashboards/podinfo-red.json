@@ -230,7 +230,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "p95 latency by path",
-      "description": "Which endpoint is slow. The /delay/ paths light up during a -Latency run.",
+      "description": "Which endpoint is slow. podinfo normalizes the path label to route names, so a -Latency run shows up as `delay` rather than `/delay/1` and `/delay/2`. Other values seen here are root, healthz, readyz, metrics, and status.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "fieldConfig": {
