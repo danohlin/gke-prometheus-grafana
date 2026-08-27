@@ -105,7 +105,8 @@ try {
         # Helm 4 name for what used to be --atomic.
         '--rollback-on-failure'
     )
-    if ($DryRun) { $helmArgs += '--dry-run' }
+    # Helm 4 deprecates bare --dry-run in favour of an explicit strategy.
+    if ($DryRun) { $helmArgs += '--dry-run=client' }
 
     Write-Host "==> helm $($helmArgs -join ' ')" -ForegroundColor Cyan
     helm @helmArgs

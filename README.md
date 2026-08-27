@@ -39,6 +39,13 @@ same billing account. Switch to on-demand (~$168/mo) with `use_spot = false`.
 | `helm` | **4.x** — the deploy script rejects Helm 3 |
 | `kubectl` | any recent version |
 | `gke-gcloud-auth-plugin` | **required**; without it kubectl auth against GKE fails with an opaque error |
+| PowerShell | Windows PowerShell **5.1** or PowerShell **7+** — the scripts run on both |
+
+The scripts are deliberately written to the 5.1 baseline, avoiding PowerShell 7-only features
+such as `ForEach-Object -Parallel` and `Invoke-WebRequest -SkipHttpErrorCheck`. That matters
+because the VS Code and Windows Terminal defaults are often still 5.1, and a 7-only construct
+fails there in confusing ways — a missing parameter surfaces as a binding error inside a retry
+loop, not as "wrong PowerShell version".
 
 ```powershell
 gcloud components install gke-gcloud-auth-plugin

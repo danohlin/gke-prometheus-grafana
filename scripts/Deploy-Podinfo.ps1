@@ -63,7 +63,8 @@ $helmArgs = @(
     '--timeout', $Timeout,
     '--rollback-on-failure'
 )
-if ($DryRun) { $helmArgs += '--dry-run' }
+# Helm 4 deprecates bare --dry-run in favour of an explicit strategy.
+if ($DryRun) { $helmArgs += '--dry-run=client' }
 
 helm @helmArgs
 if ($LASTEXITCODE -ne 0) { throw "podinfo install failed." }

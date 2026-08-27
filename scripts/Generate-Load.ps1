@@ -12,23 +12,30 @@
       /panic       crashes the process -> pod restart, KubePodCrashLooping
 
     Metrics land as http_requests_total{status} and the
-    http_request_duration_seconds{method,path,status} histogram.
+    http_request_duration_seconds{method,path,status} histogram. podinfo
+    normalizes the path label to route names, so /delay/1 appears as `delay`.
+
+    COMPATIBILITY: runs on both Windows PowerShell 5.1 and PowerShell 7+.
+    It deliberately uses .NET HttpClient rather than Invoke-WebRequest, because
+    -SkipHttpErrorCheck and ForEach-Object -Parallel are PowerShell 7 only. As a
+    bonus, HttpClient does not treat 5xx as an exception, which is exactly what
+    -Errors mode needs.
 
 .EXAMPLE
-    ./scripts/Generate-Load.ps1
+    ./Generate-Load.ps1
     Baseline traffic for 120s.
 
 .EXAMPLE
-    ./scripts/Generate-Load.ps1 -Latency -Duration 180
-    Baseline plus /delay/1 calls; watch p95 and p99 climb.
+    ./Generate-Load.ps1 -Latency -Duration 180
+    Baseline plus /delay calls; watch p95 and p99 climb.
 
 .EXAMPLE
-    ./scripts/Generate-Load.ps1 -Errors
-    Roughly 20% of requests return 500; watch the error-ratio panel go red.
+    ./Generate-Load.ps1 -Errors
+    A large share of requests return 500/503; watch the error-ratio panel go red.
 
 .EXAMPLE
-    ./scripts/Generate-Load.ps1 -Panic
-    Kills one pod. Expect a restart and, after ~15m, KubePodCrashLooping.
+    ./Generate-Load.ps1 -Panic
+    Kills one pod. Expect a restart and, after repeated crashes, KubePodCrashLooping.
 #>
 [CmdletBinding()]
 param(
@@ -45,9 +52,25 @@ param(
 $ErrorActionPreference = 'Stop'
 $BaseUrl = "http://localhost:$Port"
 
-# ---------------------------------------------------------------------------
-# Port-forward, owned by this script so it always gets cleaned up.
-# ---------------------------------------------------------------------------
+# System.Net.Http is a separate assembly on .NET Framework (5.1) but built in on
+# .NET (7+), where Add-Type would fail.
+if ($PSVersionTable.PSEdition -eq 'Desktop') {
+    Add-Type -AssemblyName System.Net.Http
+}
+
+if (-not (Get-Command kubectl -ErrorAction SilentlyContinue)) {
+    throw "kubectl not found on PATH."
+}
+
+# Surface a real failure early instead of blaming it on readiness later.
+$svc = kubectl get svc $ServiceName -n $Namespace --ignore-not-found 2>&1
+if (-not $svc) {
+    throw "svc/$ServiceName not found in namespace '$Namespace'. Run ./Deploy-Podinfo.ps1 first."
+}
+
+$client = New-Object System.Net.Http.HttpClient
+$client.Timeout = [TimeSpan]::FromSeconds(15)
+
 Write-Host "==> Port-forwarding svc/$ServiceName ($Namespace) to localhost:$Port" -ForegroundColor Cyan
 
 $pf = Start-Process -FilePath 'kubectl' `
@@ -55,17 +78,30 @@ $pf = Start-Process -FilePath 'kubectl' `
     -PassThru -WindowStyle Hidden
 
 try {
-    # Poll for readiness rather than sleeping a fixed guess.
-    $ready = $false
+    # -----------------------------------------------------------------------
+    # Readiness. Records the last failure so a genuine problem is reported
+    # rather than swallowed into a generic "not reachable".
+    # -----------------------------------------------------------------------
+    $ready    = $false
+    $lastErr  = $null
     foreach ($attempt in 1..30) {
         Start-Sleep -Milliseconds 500
-        if ($pf.HasExited) { throw "kubectl port-forward exited immediately. Is $ServiceName running in '$Namespace'?" }
+        if ($pf.HasExited) {
+            throw "kubectl port-forward exited immediately (code $($pf.ExitCode)). Is port $Port already in use?"
+        }
         try {
-            $r = Invoke-WebRequest -Uri "$BaseUrl/healthz" -TimeoutSec 2 -SkipHttpErrorCheck -ErrorAction Stop
-            if ($r.StatusCode -eq 200) { $ready = $true; break }
-        } catch { }
+            $resp = $client.GetAsync("$BaseUrl/healthz").GetAwaiter().GetResult()
+            $code = [int]$resp.StatusCode
+            $resp.Dispose()
+            if ($code -eq 200) { $ready = $true; break }
+            $lastErr = "HTTP $code from /healthz"
+        } catch {
+            $lastErr = $_.Exception.GetBaseException().Message
+        }
     }
-    if (-not $ready) { throw "podinfo did not become reachable on $BaseUrl" }
+    if (-not $ready) {
+        throw "podinfo did not become reachable on $BaseUrl after 15s. Last error: $lastErr"
+    }
     Write-Host "    ready" -ForegroundColor DarkGray
 
     # -----------------------------------------------------------------------
@@ -74,7 +110,8 @@ try {
     if ($Panic) {
         Write-Host "==> Sending /panic (expect the connection to drop - that is the point)" -ForegroundColor Yellow
         try {
-            Invoke-WebRequest -Uri "$BaseUrl/panic" -TimeoutSec 5 -SkipHttpErrorCheck | Out-Null
+            $r = $client.GetAsync("$BaseUrl/panic").GetAwaiter().GetResult()
+            $r.Dispose()
         } catch {
             Write-Host "    connection dropped as expected" -ForegroundColor DarkGray
         }
@@ -88,12 +125,12 @@ try {
     }
 
     # -----------------------------------------------------------------------
-    # Build the request mix.
+    # Request mix.
     # -----------------------------------------------------------------------
     $paths = @('/')
     if ($Latency) {
-        # Weighted so slow calls are a visible minority, which is what a real
-        # latency regression looks like on a percentile chart.
+        # Slow calls stay a visible minority, which is what a real latency
+        # regression looks like on a percentile chart.
         $paths += @('/delay/1', '/delay/1', '/delay/2')
     }
     if ($Errors) {
@@ -106,33 +143,56 @@ try {
 
     $deadline = (Get-Date).AddSeconds($Duration)
     $sent     = 0
+    $failed   = 0
+    $byStatus = @{}
     $lastTick = Get-Date
+    $rand     = New-Object System.Random
 
     while ((Get-Date) -lt $deadline) {
-        1..$Concurrency | ForEach-Object -Parallel {
-            $p = Get-Random -InputObject $using:paths
-            try {
-                Invoke-WebRequest -Uri "$using:BaseUrl$p" -TimeoutSec 10 -SkipHttpErrorCheck | Out-Null
-            } catch { }
-        } -ThrottleLimit $Concurrency
+        # Fire a batch concurrently via tasks - portable across 5.1 and 7,
+        # unlike ForEach-Object -Parallel.
+        $tasks = New-Object 'System.Collections.Generic.List[System.Threading.Tasks.Task]'
+        for ($i = 0; $i -lt $Concurrency; $i++) {
+            $p = $paths[$rand.Next(0, $paths.Count)]
+            $tasks.Add($client.GetAsync("$BaseUrl$p"))
+        }
 
-        $sent += $Concurrency
+        [void][System.Threading.Tasks.Task]::WaitAll($tasks.ToArray(), 20000)
+
+        foreach ($t in $tasks) {
+            if ($t.Status -eq 'RanToCompletion') {
+                $code = [int]$t.Result.StatusCode
+                if ($byStatus.ContainsKey($code)) { $byStatus[$code]++ } else { $byStatus[$code] = 1 }
+                $t.Result.Dispose()
+                $sent++
+            } else {
+                $failed++
+            }
+        }
 
         if (((Get-Date) - $lastTick).TotalSeconds -ge 10) {
-            $remaining = [int]($deadline - (Get-Date)).TotalSeconds
+            $remaining = [int]((New-TimeSpan -Start (Get-Date) -End $deadline).TotalSeconds)
             Write-Host "    $sent requests sent, ${remaining}s remaining" -ForegroundColor DarkGray
             $lastTick = Get-Date
         }
     }
 
     Write-Host ""
-    Write-Host "Done - $sent requests sent." -ForegroundColor Green
-    Write-Host "Open the 'podinfo / RED' dashboard in Grafana:" -ForegroundColor Green
-    Write-Host "  ./scripts/Connect-Grafana.ps1"
+    Write-Host "Done - $sent requests completed." -ForegroundColor Green
+    foreach ($k in ($byStatus.Keys | Sort-Object)) {
+        Write-Host ("    HTTP {0}  {1,6}" -f $k, $byStatus[$k]) -ForegroundColor DarkGray
+    }
+    if ($failed -gt 0) {
+        Write-Host "    $failed request(s) did not complete (timeout or connection reset)" -ForegroundColor Yellow
+    }
     Write-Host ""
-    Write-Host "Allow ~15-30s for the next scrape plus rate() window to fill in." -ForegroundColor DarkGray
+    Write-Host "Open the 'podinfo / RED' dashboard in Grafana:" -ForegroundColor Green
+    Write-Host "  ./Connect-Grafana.ps1"
+    Write-Host ""
+    Write-Host "Allow ~15-30s for the next scrape plus the rate() window to fill in." -ForegroundColor DarkGray
 }
 finally {
+    if ($client) { $client.Dispose() }
     if ($pf -and -not $pf.HasExited) {
         Stop-Process -Id $pf.Id -Force -ErrorAction SilentlyContinue
         Write-Host "==> Port-forward closed" -ForegroundColor DarkGray
