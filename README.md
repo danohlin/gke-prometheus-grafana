@@ -172,10 +172,31 @@ For live topology, use **Hubble**. The cluster already runs Cilium by virtue of 
 That gives an eBPF-derived service map of flows actually observed, plus a NetworkPolicy verdict
 table:
 
+GKE provisions **only the relay**, not a UI. There is no `hubble-ui` service out of the box, so
+there are two access paths:
+
+**Hubble CLI — works immediately, nothing to deploy.** The relay pod ships a `hubble-cli`
+container with TLS already configured:
+
+```powershell
+kubectl exec -n gke-managed-dpv2-observability deployment/hubble-relay -c hubble-cli -- hubble status
+kubectl exec -n gke-managed-dpv2-observability deployment/hubble-relay -c hubble-cli -- hubble observe --last 50
+kubectl exec -n gke-managed-dpv2-observability deployment/hubble-relay -c hubble-cli -- hubble observe --namespace demo --follow
+```
+
+**Hubble UI — you deploy it yourself.** Google publishes a manifest in the
+[Dataplane V2 observability setup docs](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/configure-dpv2-observability);
+it runs a UI backend pointed at `hubble-relay.gke-managed-dpv2-observability.svc:443`. Once
+applied, the service map is reached the same way as everything else here:
+
 ```powershell
 kubectl -n gke-managed-dpv2-observability port-forward service/hubble-ui 16100:80
 # then http://localhost:16100
 ```
+
+Expect the relay to report `NOT_SERVING` for a few minutes after enabling. Turning on flow
+observability recreates the `anetd` (Cilium agent) pods, and the relay retries
+`hubble-peer.kube-system:443` on a 30s loop until they are serving.
 
 `enable_metrics` is deliberately left `false`: it is an independent feature that pushes Dataplane
 V2 metrics to Google Managed Prometheus, which this stack disables on purpose. The relay and UI
