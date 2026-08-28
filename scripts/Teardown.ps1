@@ -30,6 +30,9 @@
 param(
     [string]$MonitoringNamespace = 'monitoring',
     [string]$DemoNamespace       = 'demo',
+    # Defaults to project_id from terraform/terraform.tfvars. Only needed if
+    # that file is absent or you are cleaning up a different project.
+    [string]$ProjectId,
     [switch]$KeepCluster,
     [switch]$Force
 )
@@ -108,13 +111,42 @@ finally { Pop-Location }
 # --- 4. Prove nothing is still billing --------------------------------------
 Write-Host ""
 Write-Host "==> Checking for orphaned persistent disks" -ForegroundColor Cyan
-if (Get-Command gcloud -ErrorAction SilentlyContinue) {
-    gcloud compute disks list --filter="-users:*" --format="table(name,sizeGb,zone,status)"
-    Write-Host ""
-    Write-Host "Any disk listed above is unattached and still billing - delete it with:" -ForegroundColor Yellow
-    Write-Host "  gcloud compute disks delete DISK_NAME --zone ZONE"
-} else {
-    Write-Host "gcloud not on PATH; check unattached disks manually." -ForegroundColor Yellow
+
+# The project MUST be passed explicitly. Without --project, gcloud falls back to
+# the active config, which is very often a different project entirely - and the
+# check then reports "clean" no matter what is orphaned here. `terraform output`
+# is not usable at this point because the destroy has already cleared it, so the
+# project is read from tfvars.
+if (-not $ProjectId) {
+    $tfvars = Join-Path $TerraformDir 'terraform.tfvars'
+    if (Test-Path $tfvars) {
+        $m = Select-String -Path $tfvars -Pattern '^\s*project_id\s*=\s*"([^"]+)"'
+        if ($m) { $ProjectId = $m.Matches[0].Groups[1].Value }
+    }
+}
+
+if (-not (Get-Command gcloud -ErrorAction SilentlyContinue)) {
+    Write-Host "gcloud not on PATH; check for unattached disks manually." -ForegroundColor Yellow
+}
+elseif (-not $ProjectId) {
+    Write-Host "Could not determine the project id, so the orphaned-disk check was SKIPPED." -ForegroundColor Yellow
+    Write-Host "Re-run with -ProjectId <id>, or check manually:" -ForegroundColor Yellow
+    Write-Host '  gcloud compute disks list --project <id> --filter="-users:*"'
+}
+else {
+    # 2>$null suppresses the "filter keys not present in any resource" warning
+    # gcloud emits when the project has no disks at all.
+    $orphans = @(gcloud compute disks list --project $ProjectId --filter="-users:*" --format="value(name,sizeGb,zone)" 2>$null |
+                 Where-Object { $_ -and $_.Trim() })
+
+    if ($orphans.Count -eq 0) {
+        Write-Host "No unattached disks in $ProjectId - nothing left billing." -ForegroundColor Green
+    } else {
+        Write-Host "$($orphans.Count) unattached disk(s) in ${ProjectId} - THESE ARE STILL BILLING:" -ForegroundColor Red
+        $orphans | ForEach-Object { Write-Host "  $_" }
+        Write-Host "Delete each with:" -ForegroundColor Yellow
+        Write-Host "  gcloud compute disks delete DISK_NAME --project $ProjectId --zone ZONE"
+    }
 }
 
 Write-Host ""

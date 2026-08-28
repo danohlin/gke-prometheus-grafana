@@ -144,7 +144,10 @@ reclaim logic never runs and the backing Compute Engine disks are orphaned: stil
 still billing, attached to nothing, and no longer visible to any Kubernetes API.
 
 So the script uninstalls releases → deletes PVCs → waits for the PVs to go → destroys the
-cluster → runs `gcloud compute disks list --filter="-users:*"` to prove nothing is left.
+cluster → runs `gcloud compute disks list --project <id> --filter="-users:*"` to prove nothing
+is left. The project id is read from `terraform.tfvars` (override with `-ProjectId`); passing it
+explicitly is essential, because without `--project` gcloud silently falls back to whatever your
+active config points at and the check reports clean regardless of what is actually orphaned.
 
 `./scripts/Teardown.ps1 -KeepCluster` removes the workloads and disks but leaves the cluster up.
 
