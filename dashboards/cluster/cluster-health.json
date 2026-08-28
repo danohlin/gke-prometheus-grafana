@@ -1,0 +1,496 @@
+{
+  "uid": "cluster-health",
+  "title": "Cluster health - top to bottom",
+  "description": "Single-pane health rollup from infrastructure up to the application. Read it top down: the stat row is a set of traffic lights where 0 is always healthy, the table below names exactly what is broken right now, and the state timelines show WHEN it broke - the dimension a topology diagram cannot give you. For live topology of what actually talks to what, use the Hubble UI (kubectl -n gke-managed-dpv2-observability port-forward service/hubble-ui 16100:80), which is eBPF-derived rather than hand-drawn.",
+  "tags": ["health", "overview", "sre"],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-3h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Data source",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "refresh": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Overall - every tile should read 0",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Scrape targets down",
+      "description": "Any monitored component Prometheus cannot reach. The broadest single indicator that something is wrong.",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short", "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "area", "textMode": "auto" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "count(up == 0) or vector(0)", "legendFormat": "down" } ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Nodes not Ready",
+      "description": "Nodes whose Ready condition is not true. On this all-Spot pool a transient 1 usually means a preemption replacement is in flight - cross-check the Spot node lifecycle dashboard.",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short", "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "area", "textMode": "auto" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "count(kube_node_status_condition{condition=\"Ready\", status=\"true\"} == 0) or vector(0)", "legendFormat": "not ready" } ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Pods not healthy",
+      "description": "Pods in Pending, Failed, or Unknown. Excludes Succeeded, which is the correct terminal state for Jobs.",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short", "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 3 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "area", "textMode": "auto" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(kube_pod_status_phase{phase=~\"Pending|Failed|Unknown\"}) or vector(0)", "legendFormat": "unhealthy" } ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Workloads degraded",
+      "description": "Deployments, DaemonSets, and StatefulSets with fewer ready replicas than desired.",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short", "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 3 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "area", "textMode": "auto" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "(count((sum by (namespace, deployment) (kube_deployment_status_replicas_available)) < (sum by (namespace, deployment) (kube_deployment_spec_replicas))) or vector(0)) + (count((sum by (namespace, daemonset) (kube_daemonset_status_number_ready)) < (sum by (namespace, daemonset) (kube_daemonset_status_desired_number_scheduled))) or vector(0)) + (count((sum by (namespace, statefulset) (kube_statefulset_status_replicas_ready)) < (sum by (namespace, statefulset) (kube_statefulset_replicas))) or vector(0))",
+          "legendFormat": "degraded"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "PVCs not Bound",
+      "description": "Persistent volume claims stuck Pending or Lost. A Pending PVC is why a StatefulSet pod will not start.",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short", "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "area", "textMode": "auto" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(kube_persistentvolumeclaim_status_phase{phase!=\"Bound\"}) or vector(0)", "legendFormat": "unbound" } ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Alerts firing",
+      "description": "Firing alerts excluding Watchdog, which is designed to fire permanently as a proof the alert pipeline works.",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short", "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 5 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "area", "textMode": "auto" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "count(ALERTS{alertstate=\"firing\", alertname!=\"Watchdog\"}) or vector(0)", "legendFormat": "firing" } ]
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "What is broken right now",
+      "description": "Every unreachable scrape target, named. This table being empty is the healthy state - if something is wrong, this is the first place to look and usually identifies the failing component outright.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "custom": { "align": "left" } }, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "up == 0", "format": "table", "instant": true } ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true, "Value": true, "endpoint": true, "container": true, "service": true, "uid": true },
+            "renameByName": { "job": "Job", "namespace": "Namespace", "pod": "Pod", "instance": "Instance", "node": "Node" }
+          }
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "state-timeline",
+      "title": "Scrape target health over time",
+      "description": "One row per scrape job, red where any target in that job was down. This is the panel that answers 'when did it break' - the dimension a live topology view cannot show.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 0, "fillOpacity": 90 },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red", "index": 0 }, "1": { "text": "UP", "color": "green", "index": 1 } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null } ] }
+        },
+        "overrides": []
+      },
+      "options": { "showValue": "never", "mergeValues": true, "alignValue": "left", "legend": { "displayMode": "list", "placement": "bottom", "showLegend": false }, "tooltip": { "mode": "single" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "min by (job) (up)", "legendFormat": "{{job}}" } ]
+    },
+    {
+      "id": 200,
+      "type": "row",
+      "title": "Control plane and cluster services",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "API server error rate",
+      "description": "5xx responses from the Kubernetes API server as a share of all requests. GKE manages the control plane, so this is your main window into its health - scheduler, controller-manager, and etcd are not scrapable here.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit", "min": 0,
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 15, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(apiserver_request_total{code=~\"5..\"}[$__rate_interval])) / clamp_min(sum(rate(apiserver_request_total[$__rate_interval])), 0.001)", "legendFormat": "5xx ratio" } ]
+    },
+    {
+      "id": 21,
+      "type": "state-timeline",
+      "title": "Cluster service availability",
+      "description": "DNS, kube-state-metrics, kubelet, and the API server. A gap in kube-dns explains service-discovery failures everywhere else, so check it before chasing application errors.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 0, "fillOpacity": 90 },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red", "index": 0 }, "1": { "text": "UP", "color": "green", "index": 1 } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null } ] }
+        },
+        "overrides": []
+      },
+      "options": { "showValue": "never", "mergeValues": true, "alignValue": "left", "legend": { "showLegend": false }, "tooltip": { "mode": "single" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "min by (job) (up{job=~\"apiserver|kube-dns|kube-state-metrics|kubelet\"})", "legendFormat": "{{job}}" } ]
+    },
+    {
+      "id": 300,
+      "type": "row",
+      "title": "Nodes and infrastructure",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 30,
+      "type": "state-timeline",
+      "title": "Node Ready",
+      "description": "Per-node Ready condition. On this all-Spot pool, red bands are usually preemptions rather than faults.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 23 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 0, "fillOpacity": 90 },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "NOT READY", "color": "red", "index": 0 }, "1": { "text": "READY", "color": "green", "index": 1 } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null } ] }
+        },
+        "overrides": []
+      },
+      "options": { "showValue": "never", "mergeValues": true, "alignValue": "left", "legend": { "showLegend": false }, "tooltip": { "mode": "single" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "max by (node) (kube_node_status_condition{condition=\"Ready\", status=\"true\"})", "legendFormat": "{{node}}" } ]
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Node pressure conditions",
+      "description": "MemoryPressure, DiskPressure, PIDPressure, NetworkUnavailable. Any of these going to 1 means the kubelet will start evicting pods - it is the cause behind a lot of otherwise mysterious restarts.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 23 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short", "min": 0, "decimals": 0,
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 25, "showPoints": "auto", "lineInterpolation": "stepAfter" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum by (condition) (kube_node_status_condition{condition=~\"MemoryPressure|DiskPressure|PIDPressure|NetworkUnavailable\", status=\"true\"})", "legendFormat": "{{condition}}" } ]
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Node root filesystem used",
+      "description": "Disk fill on the 50GiB boot disks. Crossing roughly 85% triggers DiskPressure and image garbage collection; at that point pods start being evicted.",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 31 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit", "min": 0, "max": 1,
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never", "thresholdsStyle": { "mode": "dashed" } },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 0.8 }, { "color": "red", "value": 0.9 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "1 - (node_filesystem_avail_bytes{mountpoint=\"/\", fstype!=\"tmpfs\"} / node_filesystem_size_bytes{mountpoint=\"/\", fstype!=\"tmpfs\"})", "legendFormat": "{{instance}}" } ]
+    },
+    {
+      "id": 400,
+      "type": "row",
+      "title": "Workloads",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 38 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 40,
+      "type": "table",
+      "title": "Deployments: ready vs desired",
+      "description": "Sorted so anything short of desired floats to the top. Ready equal to Desired everywhere is the healthy state.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 39 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "left" } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Ready" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "color-text" } },
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } }
+            ]
+          }
+        ]
+      },
+      "options": { "showHeader": true, "sortBy": [ { "displayName": "Ready", "desc": false } ] },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum by (namespace, deployment) (kube_deployment_status_replicas_available)", "format": "table", "instant": true },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum by (namespace, deployment) (kube_deployment_spec_replicas)", "format": "table", "instant": true }
+      ],
+      "transformations": [
+        { "id": "joinByField", "options": { "byField": "deployment", "mode": "outer" } },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time 1": true, "Time 2": true, "namespace 2": true },
+            "renameByName": { "namespace 1": "Namespace", "deployment": "Deployment", "Value #A": "Ready", "Value #B": "Desired" }
+          }
+        }
+      ]
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "Pods by phase",
+      "description": "Running should be a flat line. Pending spikes mean scheduling or PVC problems; Failed means something is genuinely broken.",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 39 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short", "min": 0, "decimals": 0,
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 20, "showPoints": "never", "stacking": { "mode": "normal", "group": "A" } }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Running" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } } ] },
+          { "matcher": { "id": "byName", "options": "Pending" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } } ] },
+          { "matcher": { "id": "byName", "options": "Failed" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum by (phase) (kube_pod_status_phase)", "legendFormat": "{{phase}}" } ]
+    },
+    {
+      "id": 42,
+      "type": "timeseries",
+      "title": "Container restarts by namespace",
+      "description": "Restarts are the symptom; the panels above are usually the cause. Correlate a spike here with node pressure or a Spot preemption.",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 48 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short", "min": 0,
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 70, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum by (namespace) (increase(kube_pod_container_status_restarts_total[$__rate_interval]))", "legendFormat": "{{namespace}}" } ]
+    },
+    {
+      "id": 43,
+      "type": "timeseries",
+      "title": "Containers waiting, by reason",
+      "description": "Empty is healthy - this metric only has series while a container is actually stuck. CrashLoopBackOff points at the app; ImagePullBackOff on this cluster points at Cloud NAT, since the nodes are private and images come from quay.io and ghcr.io.",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 48 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short", "min": 0, "decimals": 0,
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 30, "showPoints": "auto", "lineInterpolation": "stepAfter" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum by (reason) (kube_pod_container_status_waiting_reason > 0)", "legendFormat": "{{reason}}" } ]
+    },
+    {
+      "id": 500,
+      "type": "row",
+      "title": "Storage",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 55 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 50,
+      "type": "table",
+      "title": "PersistentVolumeClaims",
+      "description": "Every PVC and its phase. Anything not Bound blocks the pod that wants it.",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 56 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "custom": { "align": "left" } }, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "kube_persistentvolumeclaim_status_phase == 1", "format": "table", "instant": true } ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true, "Value": true, "endpoint": true, "container": true, "service": true, "instance": true, "job": true, "pod": true, "uid": true },
+            "renameByName": { "namespace": "Namespace", "persistentvolumeclaim": "PVC", "phase": "Phase" }
+          }
+        }
+      ]
+    },
+    {
+      "id": 51,
+      "type": "timeseries",
+      "title": "Volume fullness",
+      "description": "Used share of each mounted PVC. Prometheus is capped by retentionSize at 45GiB of its 50GiB claim, so it should plateau rather than fill.",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 56 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit", "min": 0, "max": 1,
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 0.8 }, { "color": "red", "value": 0.9 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "1 - (kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes)", "legendFormat": "{{persistentvolumeclaim}}" } ]
+    },
+    {
+      "id": 600,
+      "type": "row",
+      "title": "Monitoring stack self-health",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 63 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 60,
+      "type": "state-timeline",
+      "title": "Monitoring components",
+      "description": "Prometheus, Alertmanager, Grafana, and the operator. If these are down the rest of this dashboard is lying to you, which is why they get their own row.",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 64 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 0, "fillOpacity": 90 },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red", "index": 0 }, "1": { "text": "UP", "color": "green", "index": 1 } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null } ] }
+        },
+        "overrides": []
+      },
+      "options": { "showValue": "never", "mergeValues": true, "alignValue": "left", "legend": { "showLegend": false }, "tooltip": { "mode": "single" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "min by (job) (up{job=~\".*prometheus.*|.*alertmanager.*|.*grafana.*|.*operator.*\"})", "legendFormat": "{{job}}" } ]
+    },
+    {
+      "id": 61,
+      "type": "timeseries",
+      "title": "Prometheus TSDB series",
+      "description": "Active series in the head block. Steady growth is normal; a sharp climb means a label has gone high-cardinality and will eventually exhaust memory - the most common way a Prometheus dies.",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 64 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short", "min": 0,
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(prometheus_tsdb_head_series)", "legendFormat": "head series" } ]
+    }
+  ]
+}

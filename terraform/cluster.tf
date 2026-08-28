@@ -38,6 +38,19 @@ resource "google_container_cluster" "primary" {
     managed_prometheus {
       enabled = false
     }
+
+    # Hubble. The cluster already runs Cilium by virtue of ADVANCED_DATAPATH
+    # below, so this only switches on its observability layer: an eBPF-derived
+    # service map of real observed flows, rather than a diagram someone drew.
+    #
+    # enable_metrics stays false on purpose. It is an independent feature that
+    # pushes Dataplane V2 metrics to Google Managed Prometheus - which this
+    # stack disables deliberately. The relay and UI are entirely in-cluster and
+    # reached by port-forward, so they do not reintroduce GMP billing.
+    advanced_datapath_observability_config {
+      enable_relay   = var.enable_hubble_relay
+      enable_metrics = false
+    }
   }
 
   # SYSTEM_COMPONENTS only. Adding WORKLOADS ships every container stdout to

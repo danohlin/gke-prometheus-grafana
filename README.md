@@ -153,6 +153,38 @@ active config points at and the check reports clean regardless of what is actual
 
 ---
 
+## Health and topology
+
+**`Cluster health - top to bottom`** is the single pane for "is anything broken, and where".
+Read it downward: a stat row where every tile should read **0**, then a table naming exactly
+what is unreachable, then state timelines showing *when* it broke. That last dimension is the
+one a topology diagram cannot give you.
+
+**Grafana is deliberately not used for topology.** The Node Graph panel needs `nodes`/`edges`
+dataframes, realistically produced by Tempo service graphs, which require distributed tracing
+this stack does not collect. The Canvas panel can bind a hand-drawn diagram to live metrics, but
+it shows the topology you drew rather than the one that exists, so it drifts silently - which
+defeats the purpose of a failure-finding view.
+
+For live topology, use **Hubble**. The cluster already runs Cilium by virtue of Dataplane V2, so
+`advanced_datapath_observability_config.enable_relay` in
+[terraform/cluster.tf](terraform/cluster.tf) turns on its observability layer and nothing more.
+That gives an eBPF-derived service map of flows actually observed, plus a NetworkPolicy verdict
+table:
+
+```powershell
+kubectl -n gke-managed-dpv2-observability port-forward service/hubble-ui 16100:80
+# then http://localhost:16100
+```
+
+`enable_metrics` is deliberately left `false`: it is an independent feature that pushes Dataplane
+V2 metrics to Google Managed Prometheus, which this stack disables on purpose. The relay and UI
+run entirely in-cluster, so they do not reintroduce GMP billing. Google publishes no pricing for
+flow observability and warns that `anetd` pod memory grows with Hubble collection - worth
+watching on 8GiB nodes.
+
+---
+
 ## Design decisions
 
 **GKE Standard, not Autopilot.** Autopilot bans `hostPID`/`hostNetwork` and does not allowlist
@@ -260,6 +292,8 @@ helm/
   podinfo/                 values.yaml + VERSION
 dashboards/                Imported by the Grafana sidecar, NOT part of any Helm release
   cluster/                 -> monitoring ns, applied by Deploy-Monitoring.ps1
+    cluster-health.json    Layered health rollup: infra -> control plane -> nodes ->
+                           services -> workloads -> storage -> monitoring stack
     kube-dns.json          GKE kube-dns: cache hit ratio, probe latency, errors
     spot-node-lifecycle.json  Spot preemptions: node age sawtooth, churn, blast radius
   demo/                    -> demo ns, applied by Deploy-Podinfo.ps1

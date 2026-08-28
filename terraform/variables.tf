@@ -112,3 +112,22 @@ variable "master_cidr" {
   type        = string
   default     = "172.16.0.0/28"
 }
+
+variable "enable_hubble_relay" {
+  description = <<-EOT
+    Deploys Hubble Relay + the Hubble UI, giving a live eBPF-derived service map
+    of what actually talks to what. Free-riding on the Dataplane V2 choice: the
+    cluster already runs Cilium, so this only turns on the observability layer.
+
+    Deliberately paired with enable_metrics = false in cluster.tf. Those are
+    independent features: metrics push to Google Managed Prometheus, which this
+    stack disables on purpose, whereas the relay and its UI run entirely
+    in-cluster and are reached by port-forward.
+
+    Note: Google documents no pricing for flow observability, and warns that
+    anetd Pod memory grows over time with Hubble collection - worth watching on
+    8GiB nodes.
+  EOT
+  type        = bool
+  default     = true
+}
