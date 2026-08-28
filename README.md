@@ -184,15 +184,23 @@ kubectl exec -n gke-managed-dpv2-observability deployment/hubble-relay -c hubble
 kubectl exec -n gke-managed-dpv2-observability deployment/hubble-relay -c hubble-cli -- hubble observe --namespace demo --follow
 ```
 
-**Hubble UI — you deploy it yourself.** Google publishes a manifest in the
-[Dataplane V2 observability setup docs](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/configure-dpv2-observability);
-it runs a UI backend pointed at `hubble-relay.gke-managed-dpv2-observability.svc:443`. Once
-applied, the service map is reached the same way as everything else here:
+**Hubble UI — one command.** The UI is not managed by GKE, so it ships here as
+[manifests/hubble-ui.yaml](manifests/hubble-ui.yaml). The script applies it on first run and
+then port-forwards:
 
 ```powershell
-kubectl -n gke-managed-dpv2-observability port-forward service/hubble-ui 16100:80
-# then http://localhost:16100
+./scripts/Connect-Hubble.ps1          # deploys if needed, opens http://localhost:16100
+./scripts/Connect-Hubble.ps1 -Cli     # terminal flows instead, nothing to deploy
 ```
+
+Two details in that manifest are easy to get wrong. The managed secret stores its keys as
+`ca.crt` / `tls.crt` / `tls.key`, but the backend expects `hubble-relay-ca.crt` / `client.crt` /
+`client.key`, so the volume needs an explicit `items` mapping — without it the backend fails TLS
+with an error that never mentions certificates. And Google's inline manifest omits RBAC; the
+backend needs read access to namespaces, pods, and services or the map renders blank.
+
+The map is built from **observed flows**, so a service with no recent traffic simply will not
+appear. Run `./scripts/Generate-Load.ps1 -Latency` first if the demo namespace looks empty.
 
 Expect the relay to report `NOT_SERVING` for a few minutes after enabling. Turning on flow
 observability recreates the `anetd` (Cilium agent) pods, and the relay retries
@@ -311,6 +319,8 @@ terraform/
 helm/
   kube-prometheus-stack/   values.yaml + VERSION
   podinfo/                 values.yaml + VERSION
+manifests/
+  hubble-ui.yaml           Hubble UI - GKE provisions only the relay, not this
 dashboards/                Imported by the Grafana sidecar, NOT part of any Helm release
   cluster/                 -> monitoring ns, applied by Deploy-Monitoring.ps1
     cluster-health.json    Layered health rollup: infra -> control plane -> nodes ->
@@ -325,5 +335,6 @@ scripts/
   Deploy-Podinfo.ps1       demo workload + demo dashboards
   Generate-Load.ps1        -Latency / -Errors / -Panic
   Connect-Grafana.ps1      port-forwards
+  Connect-Hubble.ps1       Hubble service map (deploys the UI on first run)
   Teardown.ps1             ordered destroy, orphan-disk check
 ```

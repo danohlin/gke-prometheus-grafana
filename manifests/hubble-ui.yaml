@@ -1,0 +1,208 @@
+# ---------------------------------------------------------------------------
+# Hubble UI - the graphical service map for GKE Dataplane V2 observability.
+#
+# GKE provisions ONLY hubble-relay when
+# monitoring_config.advanced_datapath_observability_config.enable_relay is true.
+# There is no managed hubble-ui service, so the UI is deployed here, pointed at
+# the managed relay. This is Google's documented approach, reproduced as a
+# committed manifest rather than a copy-paste from a docs page.
+#
+# Images are pinned to v0.13.5, the current hubble-ui release. Google's own
+# documentation specifies v0.13.2; this is three patches newer on the same minor
+# line. If the UI ever misbehaves against the managed relay, pin back to
+# v0.13.2 - that is the combination Google tests.
+#
+# Apply:   kubectl apply -f manifests/hubble-ui.yaml
+# View:    kubectl -n gke-managed-dpv2-observability port-forward svc/hubble-ui 16100:80
+#          then http://localhost:16100
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hubble-ui
+  namespace: gke-managed-dpv2-observability
+---
+# The backend reads Kubernetes objects to label the nodes on the service map.
+# Google's inline manifest omits RBAC; without it the namespace selector comes
+# back empty and the map renders blank. Read-only, and scoped to what it draws.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hubble-ui
+rules:
+  - apiGroups: [""]
+    resources: [namespaces, pods, services, nodes]
+    verbs: [get, list, watch]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - apiGroups: ["cilium.io"]
+    resources: ["*"]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hubble-ui
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hubble-ui
+subjects:
+  - kind: ServiceAccount
+    name: hubble-ui
+    namespace: gke-managed-dpv2-observability
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hubble-ui-nginx
+  namespace: gke-managed-dpv2-observability
+data:
+  nginx.conf: |
+    server {
+        listen       8081;
+        server_name  localhost;
+        root /app;
+        index index.html;
+        client_max_body_size 1G;
+
+        location / {
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+
+            # gRPC-web calls from the frontend go to the backend sidecar.
+            location /api {
+                proxy_http_version 1.1;
+                proxy_pass_request_headers on;
+                proxy_hide_header Access-Control-Allow-Origin;
+                proxy_pass http://127.0.0.1:8090;
+            }
+
+            location / {
+                try_files $uri $uri/ /index.html /index.html;
+            }
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hubble-ui
+  namespace: gke-managed-dpv2-observability
+  labels:
+    k8s-app: hubble-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: hubble-ui
+  template:
+    metadata:
+      labels:
+        k8s-app: hubble-ui
+    spec:
+      serviceAccountName: hubble-ui
+      securityContext:
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+        # ------------------------------------------------------------------
+        # Frontend: nginx serving the SPA, proxying /api to the backend.
+        # ------------------------------------------------------------------
+        - name: frontend
+          image: quay.io/cilium/hubble-ui:v0.13.5
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8081
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: hubble-ui-nginx-conf
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: nginx.conf
+            - name: tmp-dir
+              mountPath: /tmp
+        # ------------------------------------------------------------------
+        # Backend: talks gRPC to the managed relay over mTLS.
+        # ------------------------------------------------------------------
+        - name: backend
+          image: quay.io/cilium/hubble-ui-backend:v0.13.5
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: EVENTS_SERVER_PORT
+              value: "8090"
+            - name: FLOWS_API_ADDR
+              value: "hubble-relay.gke-managed-dpv2-observability.svc:443"
+            - name: TLS_TO_RELAY_ENABLED
+              value: "true"
+            # Must match the SAN on the relay's server certificate, which is
+            # relay.<namespace>.svc.cluster.local - NOT the service DNS name.
+            - name: TLS_RELAY_SERVER_NAME
+              value: "relay.gke-managed-dpv2-observability.svc.cluster.local"
+            - name: TLS_RELAY_CA_CERT_FILES
+              value: "/var/lib/hubble-ui/certs/hubble-relay-ca.crt"
+            - name: TLS_RELAY_CLIENT_CERT_FILE
+              value: "/var/lib/hubble-ui/certs/client.crt"
+            - name: TLS_RELAY_CLIENT_KEY_FILE
+              value: "/var/lib/hubble-ui/certs/client.key"
+          ports:
+            - name: grpc
+              containerPort: 8090
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: hubble-ui-client-certs
+              mountPath: /var/lib/hubble-ui/certs
+              readOnly: true
+      volumes:
+        - name: hubble-ui-nginx-conf
+          configMap:
+            name: hubble-ui-nginx
+        - name: tmp-dir
+          emptyDir: {}
+        # ------------------------------------------------------------------
+        # The managed secret stores keys as ca.crt / tls.crt / tls.key, but the
+        # backend expects hubble-relay-ca.crt / client.crt / client.key. This
+        # items mapping does the rename - without it the backend starts and then
+        # fails TLS with a missing-file error that does not mention certificates.
+        # ------------------------------------------------------------------
+        - name: hubble-ui-client-certs
+          secret:
+            secretName: hubble-relay-client-certs
+            defaultMode: 0400
+            items:
+              - key: ca.crt
+                path: hubble-relay-ca.crt
+              - key: tls.crt
+                path: client.crt
+              - key: tls.key
+                path: client.key
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hubble-ui
+  namespace: gke-managed-dpv2-observability
+  labels:
+    k8s-app: hubble-ui
+spec:
+  # ClusterIP only, consistent with the rest of this stack: reached by
+  # port-forward, never exposed.
+  type: ClusterIP
+  selector:
+    k8s-app: hubble-ui
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8081
