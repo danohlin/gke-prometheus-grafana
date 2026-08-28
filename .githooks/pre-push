@@ -1,0 +1,49 @@
+#!/usr/bin/env sh
+#
+# Verified secret scan before anything leaves the machine.
+#
+# This is where trufflehog belongs rather than pre-commit: it calls provider
+# APIs to confirm whether a candidate is a LIVE credential, which is slower but
+# is exactly the question that matters at the moment you publish.
+#
+# gitleaks answers "this looks like a secret". trufflehog answers "this secret
+# works right now". The two are complementary, which is why both run.
+#
+# Enable with:  ./scripts/Install-Hooks.ps1
+
+set -eu
+
+RED=""; YEL=""; GRN=""; DIM=""; OFF=""
+if [ -t 1 ]; then
+  RED="$(printf '\033[31m')"; YEL="$(printf '\033[33m')"
+  GRN="$(printf '\033[32m')"; DIM="$(printf '\033[2m')"; OFF="$(printf '\033[0m')"
+fi
+
+repo_root=$(git rev-parse --show-toplevel)
+
+printf '%s==>%s trufflehog (verified secrets, full history)\n' "$DIM" "$OFF"
+
+if ! command -v trufflehog >/dev/null 2>&1; then
+  printf '%sWARNING: trufflehog is not installed - the verification scan did NOT run.%s\n' "$YEL" "$OFF"
+  printf '  gitleaks (pre-commit) still covers pattern and entropy matching, but nothing\n'
+  printf '  has confirmed whether a candidate credential is actually live.\n'
+  printf '  Install: https://github.com/trufflesecurity/trufflehog/releases\n'
+  exit 0
+fi
+
+# --results=verified reports only credentials confirmed live against the
+# provider. Unverified candidates are gitleaks territory and would make this
+# hook noisy enough that people would start bypassing it.
+out=$(trufflehog git "file://$repo_root" --results=verified --no-update --json 2>/dev/null || true)
+
+if [ -n "$out" ]; then
+  count=$(printf '%s\n' "$out" | grep -c 'SourceMetadata' || true)
+  printf '%sBLOCKED: %s VERIFIED live credential(s) found in history.%s\n' "$RED" "$count" "$OFF"
+  printf '%s\n' "$out" | head -20
+  printf '\n%sDo not push.%s ROTATE the credential first - it is already compromised.\n' "$RED" "$OFF"
+  printf 'Rewriting history is cleanup, not remediation.\n'
+  exit 1
+fi
+
+printf '  %sno verified secrets%s\n' "$GRN" "$OFF"
+exit 0

@@ -53,6 +53,31 @@ gcloud auth login
 gcloud auth application-default login
 ```
 
+### Secret-scanning hooks
+
+```powershell
+./scripts/Install-Hooks.ps1
+```
+
+Run once per clone. Git does not version `.git/hooks`, so the hooks in
+[.githooks/](.githooks/) do nothing until `core.hooksPath` points at them.
+
+- **pre-commit** — gitleaks over staged changes (blocking), plus an identifier
+  review for cloud account IDs and emails (warning), plus a hard block on filenames
+  that must never be tracked even via `git add -f`: `terraform.tfvars`, `*.tfstate`,
+  `backend.hcl`, `*key.json`, `kubeconfig`.
+- **pre-push** — trufflehog `--results=verified` over full history (blocking).
+
+The two scanners answer different questions and are not redundant. gitleaks says
+"this looks like a secret" from patterns and entropy, fast enough for every commit.
+trufflehog calls the provider API to say "this secret is live right now", which is
+the question that actually matters when publishing. If either tool is missing the
+hook warns loudly rather than passing silently — a scan that quietly does nothing is
+worse than no scan, because it manufactures confidence.
+
+Never bypass with `--no-verify`. If a finding is real, rotate the credential first:
+removing it from the diff does not undo the exposure.
+
 ---
 
 ## Quickstart

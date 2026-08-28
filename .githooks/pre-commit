@@ -1,0 +1,94 @@
+#!/usr/bin/env sh
+#
+# Blocking secret scan on staged changes.
+#
+# Fast path only: pattern and entropy matching via gitleaks, which is quick
+# enough to run on every commit. API verification is slower and lives in the
+# pre-push hook instead.
+#
+# Enable with:  ./scripts/Install-Hooks.ps1
+# (or:          git config core.hooksPath .githooks)
+
+set -eu
+
+RED=""; YEL=""; GRN=""; DIM=""; OFF=""
+if [ -t 1 ]; then
+  RED="$(printf '\033[31m')"; YEL="$(printf '\033[33m')"
+  GRN="$(printf '\033[32m')"; DIM="$(printf '\033[2m')"; OFF="$(printf '\033[0m')"
+fi
+
+# Nothing staged means nothing to check (e.g. a merge commit).
+if git diff --cached --quiet 2>/dev/null; then
+  exit 0
+fi
+
+fail=0
+
+# ---------------------------------------------------------------------------
+# 1. gitleaks over the staged diff.
+#
+# Deliberately NOT skipped when gitleaks is absent - a scan that silently does
+# nothing is worse than no scan, because it produces false confidence.
+# ---------------------------------------------------------------------------
+printf '%s==>%s gitleaks (staged changes)\n' "$DIM" "$OFF"
+if command -v gitleaks >/dev/null 2>&1; then
+  # Use the EXIT CODE, not the output text: gitleaks prints "no leaks found"
+  # when clean, and grepping for "leaks found" matches that substring too -
+  # which would block every clean commit. 0 = clean, non-zero = findings.
+  gl_out=$(git diff --cached | gitleaks stdin --redact --no-banner --verbose 2>&1) && gl_rc=0 || gl_rc=$?
+  if [ "$gl_rc" -ne 0 ]; then
+    printf '%sBLOCKED: gitleaks found candidate secrets in staged changes.%s\n' "$RED" "$OFF"
+    printf '%s\n' "$gl_out" | tail -30
+    fail=1
+  else
+    printf '  %sclean%s\n' "$GRN" "$OFF"
+  fi
+else
+  printf '%sWARNING: gitleaks is not installed - the staged-secret scan did NOT run.%s\n' "$YEL" "$OFF"
+  printf '  winget install Gitleaks.Gitleaks\n'
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Identifiers. Not secrets, but not things to publish either. These are
+#    review items rather than hard blocks, so they warn and let the commit
+#    through - the committer decides.
+# ---------------------------------------------------------------------------
+printf '%s==>%s identifiers (cloud accounts, hosts, emails)\n' "$DIM" "$OFF"
+ids=$(git diff --cached -U0 | grep '^+' | grep -vE '^\+\+\+' | grep -nEi \
+  -e 'AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}' \
+  -e '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' \
+  -e '\b[0-9]{12}\b' \
+  -e '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.(com|net|org|io|co)' \
+  -e '\.(internal|corp|local)\b' \
+  2>/dev/null | grep -viE 'example\.com|noreply|users\.noreply|203\.0\.113\.' || true)
+if [ -n "$ids" ]; then
+  printf '%sREVIEW: possible identifiers in staged changes (not blocking):%s\n' "$YEL" "$OFF"
+  printf '%s\n' "$ids" | head -10 | sed 's/^/    /'
+else
+  printf '  %sclean%s\n' "$GRN" "$OFF"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Files that should never be tracked, regardless of .gitignore. Belt and
+#    braces: a `git add -f` bypasses .gitignore, this catches it.
+# ---------------------------------------------------------------------------
+printf '%s==>%s dangerous filenames\n' "$DIM" "$OFF"
+danger=$(git diff --cached --name-only --diff-filter=A | grep -Ei \
+  '(^|/)terraform\.tfvars$|\.tfstate($|\.)|(^|/)backend\.hcl$|.*key\.json$|.*credentials.*\.json$|(^|/)kubeconfig' \
+  || true)
+if [ -n "$danger" ]; then
+  printf '%sBLOCKED: these must not be committed:%s\n' "$RED" "$OFF"
+  printf '%s\n' "$danger" | sed 's/^/    /'
+  printf '  Unstage with: git restore --staged <file>\n'
+  fail=1
+else
+  printf '  %sclean%s\n' "$GRN" "$OFF"
+fi
+
+if [ "$fail" -ne 0 ]; then
+  printf '\n%sCommit rejected.%s Fix the findings above.\n' "$RED" "$OFF"
+  printf 'If a credential was real, rotate it first - removing it from the diff is not enough.\n'
+  exit 1
+fi
+
+exit 0
