@@ -118,6 +118,32 @@ finally {
 
 if ($DryRun) { return }
 
+# ---------------------------------------------------------------------------
+# Cluster-scoped dashboards. These are NOT part of the Helm release - they
+# reach Grafana entirely separately, as ConfigMaps labelled grafana_dashboard=1
+# that the Grafana sidecar watches for. Applying them here means a successful
+# deploy always includes them, rather than leaving a manual step that is easy
+# to forget and whose absence looks like a broken dashboard.
+# ---------------------------------------------------------------------------
+$DashboardDir = Join-Path $RepoRoot 'dashboards/cluster'
+if (Test-Path $DashboardDir) {
+    $files = @(Get-ChildItem $DashboardDir -Filter '*.json')
+    Write-Host ""
+    Write-Host "==> Applying $($files.Count) cluster dashboard(s) to '$Namespace'" -ForegroundColor Cyan
+    foreach ($f in $files) {
+        # ConfigMap name derives from the filename, so re-running updates in
+        # place rather than accumulating duplicates.
+        $cmName = "$($f.BaseName)-dashboard"
+        kubectl create configmap $cmName `
+            --namespace $Namespace `
+            --from-file="$($f.Name)=$($f.FullName)" `
+            --dry-run=client -o yaml |
+            kubectl label --local -f - grafana_dashboard=1 -o yaml |
+            kubectl apply -f -
+        if ($LASTEXITCODE -ne 0) { throw "Failed to apply dashboard $($f.Name)." }
+    }
+}
+
 Write-Host ""
 Write-Host "==> Release status" -ForegroundColor Cyan
 kubectl get pods -n $Namespace

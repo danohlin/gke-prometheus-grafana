@@ -258,12 +258,16 @@ terraform/
 helm/
   kube-prometheus-stack/   values.yaml + VERSION
   podinfo/                 values.yaml + VERSION
-dashboards/
-  podinfo-red.json         RED dashboard, imported by the Grafana sidecar
+dashboards/                Imported by the Grafana sidecar, NOT part of any Helm release
+  cluster/                 -> monitoring ns, applied by Deploy-Monitoring.ps1
+    kube-dns.json          GKE kube-dns: cache hit ratio, probe latency, errors
+    spot-node-lifecycle.json  Spot preemptions: node age sawtooth, churn, blast radius
+  demo/                    -> demo ns, applied by Deploy-Podinfo.ps1
+    podinfo-red.json       Rate / Errors / Duration for podinfo
 scripts/
   Bootstrap-Secrets.ps1    Grafana admin Secret
-  Deploy-Monitoring.ps1    CRDs server-side, then the release
-  Deploy-Podinfo.ps1       demo workload + dashboard ConfigMap
+  Deploy-Monitoring.ps1    CRDs server-side, the release, then cluster dashboards
+  Deploy-Podinfo.ps1       demo workload + demo dashboards
   Generate-Load.ps1        -Latency / -Errors / -Panic
   Connect-Grafana.ps1      port-forwards
   Teardown.ps1             ordered destroy, orphan-disk check

@@ -33,9 +33,9 @@ $RepoRoot    = Split-Path -Parent $PSScriptRoot
 $ChartDir    = Join-Path $RepoRoot 'helm/podinfo'
 $ValuesFile  = Join-Path $ChartDir 'values.yaml'
 $VersionFile = Join-Path $ChartDir 'VERSION'
-$Dashboard   = Join-Path $RepoRoot 'dashboards/podinfo-red.json'
+$DashboardDir = Join-Path $RepoRoot 'dashboards/demo'
 
-foreach ($f in @($ValuesFile, $VersionFile, $Dashboard)) {
+foreach ($f in @($ValuesFile, $VersionFile, $DashboardDir)) {
     if (-not (Test-Path $f)) { throw "Missing required file: $f" }
 }
 
@@ -72,17 +72,23 @@ if ($LASTEXITCODE -ne 0) { throw "podinfo install failed." }
 if ($DryRun) { return }
 
 # ---------------------------------------------------------------------------
-# Dashboard ConfigMap. Built with --dry-run=client | apply so it is idempotent
-# and picks up edits to the JSON on every re-run.
+# Dashboard ConfigMaps, one per JSON in dashboards/demo. Built with
+# --dry-run=client | apply so each is idempotent and picks up edits on re-run.
+# These are NOT part of the Helm release: they reach Grafana via the sidecar
+# watching for the grafana_dashboard=1 label.
 # ---------------------------------------------------------------------------
-Write-Host "==> Applying RED dashboard ConfigMap" -ForegroundColor Cyan
-kubectl create configmap podinfo-red-dashboard `
-    --namespace $Namespace `
-    --from-file=podinfo-red.json=$Dashboard `
-    --dry-run=client -o yaml |
-    kubectl label --local -f - grafana_dashboard=1 -o yaml |
-    kubectl apply -f -
-if ($LASTEXITCODE -ne 0) { throw "Dashboard ConfigMap apply failed." }
+$files = @(Get-ChildItem $DashboardDir -Filter '*.json')
+Write-Host "==> Applying $($files.Count) demo dashboard(s) to '$Namespace'" -ForegroundColor Cyan
+foreach ($f in $files) {
+    $cmName = "$($f.BaseName)-dashboard"
+    kubectl create configmap $cmName `
+        --namespace $Namespace `
+        --from-file="$($f.Name)=$($f.FullName)" `
+        --dry-run=client -o yaml |
+        kubectl label --local -f - grafana_dashboard=1 -o yaml |
+        kubectl apply -f -
+    if ($LASTEXITCODE -ne 0) { throw "Failed to apply dashboard $($f.Name)." }
+}
 
 Write-Host ""
 kubectl get pods -n $Namespace
