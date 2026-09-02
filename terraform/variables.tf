@@ -68,10 +68,18 @@ variable "node_disk_size_gb" {
 
 variable "use_spot" {
   description = <<-EOT
-    Spot nodes halve compute cost (~$0.0335/hr vs $0.067/hr for e2-standard-2)
-    at the price of 30-second preemption notices. For a monitoring demo that is
-    close to a feature -- you get to watch the alerts fire -- but Prometheus
-    will restart and leave a small gap in its series. Set false for continuity.
+    Spot cuts compute cost by 40%: $0.040212/hr vs $0.067011/hr per
+    e2-standard-2, from the Cloud Billing Catalog for us-central1. Not 50% - E2
+    Spot is a 40% discount, and there is no sustained-use discount on E2 to
+    forfeit either, since SUD covers only N1, N2, N2D, C2, M1 and M2.
+
+    Across the whole cluster that is $58.69/month, but only a 35% saving overall
+    because storage costs the same either way.
+
+    The price is 30-second preemption notices. Observed here at roughly three
+    per hour: each replaces a node and leaves a gap in the Prometheus series.
+    Acceptable for a demo torn down nightly, less so for anything expected to
+    alert reliably.
 
     Because EVERY node is Spot, GKE applies no taint that needs tolerating.
   EOT

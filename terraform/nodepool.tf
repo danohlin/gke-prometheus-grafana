@@ -24,8 +24,9 @@ resource "google_container_node_pool" "primary" {
     disk_type    = "pd-balanced"
     image_type   = "COS_CONTAINERD"
 
-    # Halves compute cost. Every node in the cluster is Spot, so GKE applies no
-    # taint that workloads would need to tolerate -- no tolerations anywhere.
+    # 40% off compute when true. Every node in the cluster is Spot, so GKE
+    # applies no taint that workloads would need to tolerate -- no tolerations
+    # anywhere. See the use_spot variable for the full cost comparison.
     spot = var.use_spot
 
     oauth_scopes = [

@@ -9,24 +9,47 @@ Grafana is reachable by `kubectl port-forward` only — no Ingress, no public IP
 
 ## Cost
 
-Roughly **$0.13/hour**, about **$5 for a 40-hour week**. us-central1 list prices, before
-sustained-use discount:
+Prices are per-vCPU and per-GB from the Google Cloud Billing Catalog API for us-central1,
+not from a third-party estimate:
 
-| Line item | Monthly | Hourly |
+| E2 rate | on-demand | Spot |
 |---|---:|---:|
-| Control plane — $0.10/hr less the $74.40/mo free-tier credit | **$0.00** | $0.0000 |
-| 3× `e2-standard-2` **Spot** @ $0.0335/hr | $73.37 | $0.1005 |
-| Boot disks 3× 50 GiB `pd-balanced` @ $0.10/GiB-mo | $15.00 | $0.0205 |
-| PVCs 65 GiB (Prometheus 50 + Grafana 10 + Alertmanager 5) | $6.50 | $0.0089 |
-| **Total** | **≈ $95** | **≈ $0.13** |
+| per vCPU-hour | $0.02181159 | $0.01309000 |
+| per GB-hour | $0.00292353 | $0.00175400 |
+| → `e2-standard-2` (2 vCPU / 8 GB) | **$0.067011/hr** | **$0.040212/hr** |
 
-Two things that quietly inflate this if you are not careful, both already handled:
+**Note there is no sustained-use discount on E2.** SUD covers only N1, N2, N2D, C2, M1, and M2,
+so the on-demand rate above is the rate — nothing reduces it for long-running instances. Spot
+does not stack with SUD or CUD either, but since E2 has no SUD to forfeit, the 40% Spot discount
+is the whole story.
+
+Full cluster, 3 nodes:
+
+| Line item | on-demand | Spot |
+|---|---:|---:|
+| Control plane ($0.10/hr less the $74.40/mo free-tier credit) | $0.00 | $0.00 |
+| 3× `e2-standard-2` | $146.75 | $88.06 |
+| Boot disks 3× 50 GiB `pd-balanced` @ $0.10/GiB-mo | $15.00 | $15.00 |
+| PVCs 65 GiB (Prometheus 50 + Grafana 10 + Alertmanager 5) | $6.50 | $6.50 |
+| **Monthly if left running** | **$168.26** | **$109.56** |
+| **Hourly** | **$0.2305** | **$0.1501** |
+| **A 40-hour week** | **$9.22** | **$6.00** |
+
+Spot saves **40% on compute** but only **35% overall**, because storage is charged the same
+either way. Flip with `use_spot` in `terraform.tfvars`.
+
+The tradeoff is real rather than theoretical: on this cluster Spot preemptions ran at roughly
+three per hour, each one replacing a node and leaving a gap in the Prometheus series. Fine for a
+demo torn down nightly — and the *Spot node lifecycle* dashboard exists to show exactly that —
+but for anything expected to alert reliably, $59/month buys continuity.
+
+Two things that quietly inflate the bill if you are not careful, both already handled:
 
 - **Boot disks are pinned to 50 GiB.** GKE defaults to 100 GiB, which would double that row.
 - **Teardown order.** `Teardown.ps1` deletes PVCs *before* the cluster. See [Teardown](#teardown).
 
 The free-tier credit assumes you are not already spending it on another zonal cluster in the
-same billing account. Switch to on-demand (~$168/mo) with `use_spot = false`.
+same billing account.
 
 ---
 
